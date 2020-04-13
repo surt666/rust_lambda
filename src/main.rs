@@ -6,8 +6,9 @@ use rusoto_core::{Region, RusotoError};
 use rusoto_dynamodb::{
     AttributeValue, DynamoDb, DynamoDbClient, GetItemError, GetItemInput, QueryError, QueryInput,
 };
-use serde_derive::{Deserialize, Serialize};
-use simple_error::bail;
+use serde::{Deserialize, Serialize};
+//use serde_dynamodb::Error as DynError;
+//use simple_error::bail;
 use simple_logger;
 use std::collections::HashMap;
 
@@ -20,20 +21,27 @@ struct CustomEvent {
 #[derive(Deserialize)]
 enum Actions {
     GetDatasets,
-    GetItem {a: String, b: String},
-//    GetRelations(String)
+    GetItem { a: String, b: String },
+    //    GetRelations(String)
 }
 
 #[derive(Deserialize)]
 struct ActionEvent {
-    action: Actions
+    action: Actions,
 }
 
 #[derive(Serialize)]
 struct CustomOutput {
     message: String,
-    item: HashMap<String, AttributeValue>,
-    items: Vec<HashMap<String, AttributeValue>>
+    dataset: Dataset,
+    datasets: Vec<Dataset>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Dataset {
+    pk: String,
+    sk: String,
+    itemtype: String
 }
 
 fn set_kv(
@@ -51,11 +59,11 @@ fn set_kv(
     item
 }
 
-async fn get_item(
+async fn get_dataset(
     client: &DynamoDbClient,
     key: HashMap<String, AttributeValue>,
     table: &str,
-) -> Result<HashMap<String, AttributeValue>, RusotoError<GetItemError>> {
+) -> Result<Dataset, RusotoError<GetItemError>> {
     let get_item_input = GetItemInput {
         key: key,
         table_name: table.to_string(),
@@ -63,8 +71,8 @@ async fn get_item(
     };
     match client.get_item(get_item_input).await {
         Ok(output) => match output.item {
-            Some(item) => Ok(item),
-            None => Ok(HashMap::new()),
+            Some(item) => Ok(serde_dynamodb::from_hashmap(item).unwrap()),
+            None => Ok(Dataset {pk: "".to_string(), sk: "".to_string(), itemtype: "".to_string()}),
         },
         Err(error) => Err(error),
     }
@@ -76,7 +84,7 @@ async fn query_items(
     exp_attr_vals: Option<HashMap<String, AttributeValue>>,
     table: &str,
     index: Option<String>,
-) -> Result<Vec<HashMap<String, AttributeValue>>, RusotoError<QueryError>> {
+) -> Result<Vec<Dataset>, RusotoError<QueryError>> {
     let query_input = QueryInput {
         key_condition_expression: key_exp,
         expression_attribute_values: exp_attr_vals,
@@ -84,13 +92,22 @@ async fn query_items(
         index_name: index,
         ..Default::default()
     };
-    match client.query(query_input).await {
+    let datasets: Vec<Dataset> = client.query(query_input)
+	.await
+        .unwrap()
+        .items
+        .unwrap_or_else(|| vec![])
+        .into_iter()
+        .map(|item| serde_dynamodb::from_hashmap(item).unwrap())
+        .collect();
+    Ok(datasets)
+/*    match client.query(query_input).await {
         Ok(output) => match output.items {
             Some(items) => Ok(items),
             None => Ok(Vec::new()),
         },
         Err(error) => Err(error),
-    }
+    }*/
 }
 
 #[tokio::main]
@@ -99,11 +116,11 @@ async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, Handler
     let mut key: HashMap<String, AttributeValue> = HashMap::new();
     set_kv(&mut key, "pk".to_string(), "c4c".to_string());
     set_kv(&mut key, "sk".to_string(), "c4c".to_string());
-    let item = get_item(&client, key, "relations").await.unwrap();
-    println!("Item {:#?}", item);
+    let dataset = get_dataset(&client, key, "relations").await.unwrap();
+    println!("Item {:#?}", dataset);
     let mut key_exp: HashMap<String, AttributeValue> = HashMap::new();
     set_kv(&mut key_exp, ":itemtype".to_string(), "dataset".to_string());
-    let items = query_items(
+    let datasets = query_items(
         &client,
         Some("itemtype = :itemtype".to_string()),
         Some(key_exp),
@@ -112,18 +129,18 @@ async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, Handler
     )
     .await
     .unwrap();
-    println!("Items {:#?}", items);
+    println!("Items {:#?}", datasets);
     match e.action {
-	Actions::GetDatasets => Ok(CustomOutput {
-	    items: items,
-	    message: "".to_string(),
-	    item: HashMap::new()
-	}),
-	Actions::GetItem {a, b} => Ok(CustomOutput {
-	    item: item,
-	    message: a.to_string(),
-	    items: vec![HashMap::new()]
-	})
+        Actions::GetDatasets => Ok(CustomOutput {
+            datasets: datasets,
+            message: "".to_string(),
+            dataset: Dataset {pk: "".to_string(), sk: "".to_string(), itemtype: "".to_string()},
+        }),
+        Actions::GetItem { a, b } => Ok(CustomOutput {
+            dataset: dataset,
+            message: a.to_string(),
+            datasets: vec![],
+        }),
     }
 }
 
