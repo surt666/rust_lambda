@@ -41,13 +41,11 @@ struct CustomOutput {
 struct Dataset {
     pk: String,
     sk: String,
-    itemtype: String
+    itemtype: String,
 }
 
 fn set_kv(
-    item: &mut HashMap<String, AttributeValue>,
-    key: String,
-    val: String,
+    item: &mut HashMap<String, AttributeValue>, key: String, val: String,
 ) -> &HashMap<String, AttributeValue> {
     item.insert(
         key.to_string(),
@@ -60,9 +58,7 @@ fn set_kv(
 }
 
 async fn get_dataset(
-    client: &DynamoDbClient,
-    key: HashMap<String, AttributeValue>,
-    table: &str,
+    client: &DynamoDbClient, key: HashMap<String, AttributeValue>, table: &str,
 ) -> Result<Dataset, RusotoError<GetItemError>> {
     let get_item_input = GetItemInput {
         key: key,
@@ -72,18 +68,19 @@ async fn get_dataset(
     match client.get_item(get_item_input).await {
         Ok(output) => match output.item {
             Some(item) => Ok(serde_dynamodb::from_hashmap(item).unwrap()),
-            None => Ok(Dataset {pk: "".to_string(), sk: "".to_string(), itemtype: "".to_string()}),
+            None => Ok(Dataset {
+                pk: "".to_string(),
+                sk: "".to_string(),
+                itemtype: "".to_string(),
+            }),
         },
         Err(error) => Err(error),
     }
 }
 
 async fn query_items(
-    client: &DynamoDbClient,
-    key_exp: Option<String>,
-    exp_attr_vals: Option<HashMap<String, AttributeValue>>,
-    table: &str,
-    index: Option<String>,
+    client: &DynamoDbClient, key_exp: Option<String>,
+    exp_attr_vals: Option<HashMap<String, AttributeValue>>, table: &str, index: Option<String>,
 ) -> Result<Vec<Dataset>, RusotoError<QueryError>> {
     let query_input = QueryInput {
         key_condition_expression: key_exp,
@@ -92,8 +89,9 @@ async fn query_items(
         index_name: index,
         ..Default::default()
     };
-    let datasets: Vec<Dataset> = client.query(query_input)
-	.await
+    let datasets: Vec<Dataset> = client
+        .query(query_input)
+        .await
         .unwrap()
         .items
         .unwrap_or_else(|| vec![])
@@ -101,7 +99,7 @@ async fn query_items(
         .map(|item| serde_dynamodb::from_hashmap(item).unwrap())
         .collect();
     Ok(datasets)
-/*    match client.query(query_input).await {
+    /*    match client.query(query_input).await {
         Ok(output) => match output.items {
             Some(items) => Ok(items),
             None => Ok(Vec::new()),
@@ -115,34 +113,40 @@ async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, Handler
     let client = DynamoDbClient::new(Region::default());
     match e.action {
         Actions::GetDatasets => {
-	    let mut key_exp: HashMap<String, AttributeValue> = HashMap::new();
-	    set_kv(&mut key_exp, ":itemtype".to_string(), "dataset".to_string());
-	    let datasets = query_items(
-		&client,
-		Some("itemtype = :itemtype".to_string()),
-		Some(key_exp),
-		"relations",
-		Some("itemtype-index".to_string()),
-	    )
-		.await
-		.unwrap();
-	    println!("Items {:#?}", datasets);
-	    Ok(CustomOutput {
-		datasets: datasets,
-		message: "".to_string(),
-		dataset: Dataset {pk: "".to_string(), sk: "".to_string(), itemtype: "".to_string()},
-            })},
+            let mut key_exp: HashMap<String, AttributeValue> = HashMap::new();
+            set_kv(&mut key_exp, ":itemtype".to_string(), "dataset".to_string());
+            let datasets = query_items(
+                &client,
+                Some("itemtype = :itemtype".to_string()),
+                Some(key_exp),
+                "relations",
+                Some("itemtype-index".to_string()),
+            )
+            .await
+            .unwrap();
+            println!("Items {:#?}", datasets);
+            Ok(CustomOutput {
+                datasets: datasets,
+                message: "".to_string(),
+                dataset: Dataset {
+                    pk: "".to_string(),
+                    sk: "".to_string(),
+                    itemtype: "".to_string(),
+                },
+            })
+        }
         Actions::GetItem { a, b } => {
-	    let mut key: HashMap<String, AttributeValue> = HashMap::new();
-	    set_kv(&mut key, "pk".to_string(), a.to_string());
-	    set_kv(&mut key, "sk".to_string(), b.to_string());
-	    let dataset = get_dataset(&client, key, "relations").await.unwrap();
-	    println!("Item {:#?}", dataset);    
-	    Ok(CustomOutput {
-		dataset: dataset,
-		message: a.to_string(),
-		datasets: vec![],
-            })},
+            let mut key: HashMap<String, AttributeValue> = HashMap::new();
+            set_kv(&mut key, "pk".to_string(), a.to_string());
+            set_kv(&mut key, "sk".to_string(), b.to_string());
+            let dataset = get_dataset(&client, key, "relations").await.unwrap();
+            println!("Item {:#?}", dataset);
+            Ok(CustomOutput {
+                dataset: dataset,
+                message: a.to_string(),
+                datasets: vec![],
+            })
+        }
     }
 }
 
