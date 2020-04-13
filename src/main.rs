@@ -113,34 +113,36 @@ async fn query_items(
 #[tokio::main]
 async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, HandlerError> {
     let client = DynamoDbClient::new(Region::default());
-    let mut key: HashMap<String, AttributeValue> = HashMap::new();
-    set_kv(&mut key, "pk".to_string(), "c4c".to_string());
-    set_kv(&mut key, "sk".to_string(), "c4c".to_string());
-    let dataset = get_dataset(&client, key, "relations").await.unwrap();
-    println!("Item {:#?}", dataset);
-    let mut key_exp: HashMap<String, AttributeValue> = HashMap::new();
-    set_kv(&mut key_exp, ":itemtype".to_string(), "dataset".to_string());
-    let datasets = query_items(
-        &client,
-        Some("itemtype = :itemtype".to_string()),
-        Some(key_exp),
-        "relations",
-        Some("itemtype-index".to_string()),
-    )
-    .await
-    .unwrap();
-    println!("Items {:#?}", datasets);
     match e.action {
-        Actions::GetDatasets => Ok(CustomOutput {
-            datasets: datasets,
-            message: "".to_string(),
-            dataset: Dataset {pk: "".to_string(), sk: "".to_string(), itemtype: "".to_string()},
-        }),
-        Actions::GetItem { a, b } => Ok(CustomOutput {
-            dataset: dataset,
-            message: a.to_string(),
-            datasets: vec![],
-        }),
+        Actions::GetDatasets => {
+	    let mut key_exp: HashMap<String, AttributeValue> = HashMap::new();
+	    set_kv(&mut key_exp, ":itemtype".to_string(), "dataset".to_string());
+	    let datasets = query_items(
+		&client,
+		Some("itemtype = :itemtype".to_string()),
+		Some(key_exp),
+		"relations",
+		Some("itemtype-index".to_string()),
+	    )
+		.await
+		.unwrap();
+	    println!("Items {:#?}", datasets);
+	    Ok(CustomOutput {
+		datasets: datasets,
+		message: "".to_string(),
+		dataset: Dataset {pk: "".to_string(), sk: "".to_string(), itemtype: "".to_string()},
+            })},
+        Actions::GetItem { a, b } => {
+	    let mut key: HashMap<String, AttributeValue> = HashMap::new();
+	    set_kv(&mut key, "pk".to_string(), a.to_string());
+	    set_kv(&mut key, "sk".to_string(), b.to_string());
+	    let dataset = get_dataset(&client, key, "relations").await.unwrap();
+	    println!("Item {:#?}", dataset);    
+	    Ok(CustomOutput {
+		dataset: dataset,
+		message: a.to_string(),
+		datasets: vec![],
+            })},
     }
 }
 
