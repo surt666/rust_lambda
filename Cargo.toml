@@ -20,6 +20,7 @@ simple-error = "0.2.1"
 rusoto_core = {version = "0.43.0"}
 rusoto_dynamodb = {version = "0.43.0", features=["serialize_structs", "deserialize_structs"]}
 tokio = { version = "0.2", features = ["full"] }
+async-trait = "0.1.30"
 
 [[bin]]
 name = "bootstrap"

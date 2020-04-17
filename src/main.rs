@@ -1,5 +1,4 @@
-use std::error::Error;
-
+use async_trait::async_trait;
 use lambda_runtime::{error::HandlerError, lambda, Context};
 use log::{self, error};
 use rusoto_core::{Region, RusotoError};
@@ -7,6 +6,7 @@ use rusoto_dynamodb::{
     AttributeValue, DynamoDb, DynamoDbClient, GetItemError, GetItemInput, QueryError, QueryInput,
 };
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 //use serde_dynamodb::Error as DynError;
 //use simple_error::bail;
 use simple_logger;
@@ -44,6 +44,40 @@ struct Dataset {
     itemtype: String,
 }
 
+trait DdbKey {
+    fn pk(&self) -> String;
+    fn sk(&self) -> String;
+}
+
+trait Itemtype {
+    fn itemtype(&self) -> String;
+}
+
+impl DdbKey for Dataset {
+    fn pk(&self) -> String {
+        self.pk.clone()
+    }
+    fn sk(&self) -> String {
+        self.sk.clone()
+    }
+}
+
+impl Itemtype for Dataset {
+    fn itemtype(&self) -> String {
+        self.itemtype.clone()
+    }
+}
+
+impl Default for Dataset {
+    fn default() -> Self {
+        Dataset {
+            pk: "".to_string(),
+            sk: "".to_string(),
+            itemtype: "".to_string(),
+        }
+    }
+}
+
 fn set_kv(
     item: &mut HashMap<String, AttributeValue>, key: String, val: String,
 ) -> &HashMap<String, AttributeValue> {
@@ -57,31 +91,10 @@ fn set_kv(
     item
 }
 
-async fn get_dataset(
-    client: &DynamoDbClient, key: HashMap<String, AttributeValue>, table: &str,
-) -> Result<Dataset, RusotoError<GetItemError>> {
-    let get_item_input = GetItemInput {
-        key: key,
-        table_name: table.to_string(),
-        ..Default::default()
-    };
-    match client.get_item(get_item_input).await {
-        Ok(output) => match output.item {
-            Some(item) => Ok(serde_dynamodb::from_hashmap(item).unwrap()),
-            None => Ok(Dataset {
-                pk: "".to_string(),
-                sk: "".to_string(),
-                itemtype: "".to_string(),
-            }),
-        },
-        Err(error) => Err(error),
-    }
-}
-
-async fn query_items(
-    client: &DynamoDbClient, key_exp: Option<String>,
-    exp_attr_vals: Option<HashMap<String, AttributeValue>>, table: &str, index: Option<String>,
-) -> Result<Vec<Dataset>, RusotoError<QueryError>> {
+async fn query_items<'a, T: Deserialize<'a>>(
+    client: &DynamoDbClient, key_exp: Option<String>, exp_attr_vals: Option<DdbMap>, table: &str,
+    index: Option<String>,
+) -> Result<Vec<T>, RusotoError<QueryError>> {
     let query_input = QueryInput {
         key_condition_expression: key_exp,
         expression_attribute_values: exp_attr_vals,
@@ -89,7 +102,7 @@ async fn query_items(
         index_name: index,
         ..Default::default()
     };
-    let datasets: Vec<Dataset> = client
+    let datasets: Vec<T> = client
         .query(query_input)
         .await
         .unwrap()
@@ -99,13 +112,45 @@ async fn query_items(
         .map(|item| serde_dynamodb::from_hashmap(item).unwrap())
         .collect();
     Ok(datasets)
-    /*    match client.query(query_input).await {
-        Ok(output) => match output.items {
-            Some(items) => Ok(items),
-            None => Ok(Vec::new()),
-        },
-        Err(error) => Err(error),
-    }*/
+}
+
+type DdbMap = HashMap<String, AttributeValue>;
+
+#[async_trait]
+impl Ddb<'_> for Dataset {}
+
+#[async_trait]
+trait Ddb<'a>: Deserialize<'a> + Default + DdbKey + Itemtype {
+    async fn get_item(
+        &'a self, client: &DynamoDbClient, table: &str,
+    ) -> Result<Self, RusotoError<GetItemError>> {
+        let mut key: DdbMap = HashMap::new();
+        set_kv(&mut key, "pk".to_string(), self.pk());
+        set_kv(&mut key, "sk".to_string(), self.sk());
+        let get_item_input = GetItemInput {
+            key: key,
+            table_name: table.to_string(),
+            ..Default::default()
+        };
+        let res = client.get_item(get_item_input).await.unwrap().item;
+        match res {
+            Some(item) => Ok(serde_dynamodb::from_hashmap(item).unwrap()),
+            None => Ok(Self::default()),
+        }
+    }
+    async fn query_by_itemtype(&'a self, client: &DynamoDbClient, table: &str) -> Vec<Self> {
+        let mut key_exp: DdbMap = HashMap::new();
+        set_kv(&mut key_exp, ":itemtype".to_string(), self.itemtype());
+        query_items(
+            &client,
+            Some("itemtype = :itemtype".to_string()),
+            Some(key_exp),
+            table,
+            Some("itemtype-index".to_string()),
+        )
+        .await
+        .unwrap()
+    }
 }
 
 #[tokio::main]
@@ -113,17 +158,11 @@ async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, Handler
     let client = DynamoDbClient::new(Region::default());
     match e.action {
         Actions::GetDatasets => {
-            let mut key_exp: HashMap<String, AttributeValue> = HashMap::new();
-            set_kv(&mut key_exp, ":itemtype".to_string(), "dataset".to_string());
-            let datasets = query_items(
-                &client,
-                Some("itemtype = :itemtype".to_string()),
-                Some(key_exp),
-                "relations",
-                Some("itemtype-index".to_string()),
-            )
-            .await
-            .unwrap();
+            let ds = Dataset {
+                itemtype: "dataset".to_string(),
+                ..Default::default()
+            };
+            let datasets = ds.query_by_itemtype(&client, "relations").await;
             println!("Items {:#?}", datasets);
             Ok(CustomOutput {
                 datasets: datasets,
@@ -136,10 +175,12 @@ async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, Handler
             })
         }
         Actions::GetItem { a, b } => {
-            let mut key: HashMap<String, AttributeValue> = HashMap::new();
-            set_kv(&mut key, "pk".to_string(), a.to_string());
-            set_kv(&mut key, "sk".to_string(), b.to_string());
-            let dataset = get_dataset(&client, key, "relations").await.unwrap();
+            let ds = Dataset {
+                pk: a.to_string(),
+                sk: b.to_string(),
+                ..Default::default()
+            };
+            let dataset = ds.get_item(&client, "relations").await.unwrap();
             println!("Item {:#?}", dataset);
             Ok(CustomOutput {
                 dataset: dataset,
