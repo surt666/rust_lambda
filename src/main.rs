@@ -153,6 +153,34 @@ trait Ddb<'a>: Deserialize<'a> + Default + DdbKey + Itemtype {
     }
 }
 
+async fn get_item<'a, T: Deserialize<'a> + Default>(client: &DynamoDbClient, table: &str, key: DdbMap) -> T {
+    let get_item_input = GetItemInput {
+        key: key,
+        table_name: table.to_string(),
+        ..Default::default()
+    };
+    let res = client.get_item(get_item_input)
+	.await
+	.unwrap()
+	.item
+	.unwrap();
+    serde_dynamodb::from_hashmap(res).unwrap()
+}
+
+async fn query_by_itemtype<'a, T: Deserialize<'a>>(client: &DynamoDbClient, table: &str, itemtype: &str) -> Vec<T> {
+    let mut key_exp: DdbMap = HashMap::new();
+    set_kv(&mut key_exp, ":itemtype".to_string(), itemtype.to_string());
+    query_items(
+        &client,
+        Some("itemtype = :itemtype".to_string()),
+        Some(key_exp),
+        table,
+        Some("itemtype-index".to_string()),
+    )
+        .await
+        .unwrap()
+}
+
 #[tokio::main]
 async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, HandlerError> {
     let client = DynamoDbClient::new(Region::default());
