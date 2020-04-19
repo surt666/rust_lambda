@@ -1,0 +1,3 @@
+Run build.sh to build lambda
+
+Handler can be called anything on AWS. It just runs the main anyway
