@@ -12,16 +12,12 @@ use std::error::Error;
 use simple_logger;
 use std::collections::HashMap;
 
-/*#[derive(Deserialize)]
-struct CustomEvent {
-    #[serde(rename = "firstName")]
-    first_name: String,
-} */
+const RELATIONS_TABLE: &str = "relations";
 
 #[derive(Deserialize)]
 enum Actions {
     GetDatasets,
-    GetItem { a: String, b: String },
+    GetItem { pk: String, sk: String },
     //    GetRelations(String)
 }
 
@@ -42,6 +38,7 @@ struct Dataset {
     pk: String,
     sk: String,
     itemtype: String,
+    created: Option<u64>,
 }
 
 trait DdbKey {
@@ -74,6 +71,7 @@ impl Default for Dataset {
             pk: "".to_string(),
             sk: "".to_string(),
             itemtype: "".to_string(),
+	    created: Some(0),
         }
     }
 }
@@ -190,29 +188,25 @@ async fn my_handler(e: ActionEvent, _c: Context) -> Result<CustomOutput, Handler
                 itemtype: "dataset".to_string(),
                 ..Default::default()
             };
-            let datasets = ds.query_by_itemtype(&client, "relations").await;
+            let datasets = ds.query_by_itemtype(&client, RELATIONS_TABLE).await;
             println!("Items {:#?}", datasets);
             Ok(CustomOutput {
                 datasets: datasets,
                 message: "".to_string(),
-                dataset: Dataset {
-                    pk: "".to_string(),
-                    sk: "".to_string(),
-                    itemtype: "".to_string(),
-                },
+                dataset: Dataset::default()
             })
         }
-        Actions::GetItem { a, b } => {
+        Actions::GetItem { pk, sk } => {
             let ds = Dataset {
-                pk: a.to_string(),
-                sk: b.to_string(),
+                pk: pk.to_string(),
+                sk: sk.to_string(),
                 ..Default::default()
             };
-            let dataset = ds.get_item(&client, "relations").await.unwrap();
+            let dataset = ds.get_item(&client, RELATIONS_TABLE).await.unwrap();
             println!("Item {:#?}", dataset);
             Ok(CustomOutput {
                 dataset: dataset,
-                message: a.to_string(),
+                message: pk.to_string(),
                 datasets: vec![],
             })
         }
